@@ -6,6 +6,7 @@ from typing import Any
 import re
 from sortedcontainers import SortedList
 import logging
+import requests
 
 
 logger = logging.getLogger()
@@ -17,7 +18,7 @@ class Topic:
         self.cat = cat
         self.subcat = subcat
         self.post = post
-        self.messages = SortedList([], key=lambda x: x.timestamp)
+        self.messages = dict()
 
     def first_messages(self, limit: int = 40) -> list[datetime]:
         return self.messages[0:limit-1]
@@ -47,11 +48,29 @@ class Topic:
         self.max_page = max_page
 
         # Find all messages in the page
-        messages = soup.find_all("table", class_="messagetable")
-        for message_block in messages:
+        messages_soup = soup.find_all("table", class_="messagetable")
+        for message_block in messages_soup:
             message = Message.parse_html(self, message_block)
-            self.messages.add(message)
+            if message:
+                self.add_message(message)
+    
+    def add_message(self, message) -> None:
+        date = message.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        if date in self.messages:
+            messages_for_date = self.messages[date]
+        else:
+            messages_for_date = SortedList([], key=lambda m: m.timestamp)
+            self.messages[date] = messages_for_date
+        messages_for_date.add(message)
 
+    def load_page(self, page: int) -> None:
+        url = f"https://forum.hardware.fr/forum2.php?config=hfr.inc&cat={self.cat}&subcat={self.subcat}&post={self.post}&print=1&page={page}"
+
+        r = requests.get(url, headers={"Accept": "text/html", "Accept-Encoding": "gzip, deflate, br, zstd", "User-Agent": "HFRTopicSummarizer"})
+        html = r.text
+
+        self.parse_page_html(html)
 
 
 
@@ -67,8 +86,11 @@ class Message:
     def parse_html(cls, topic: Topic, html: NavigableString):
         case1 = html.find("td", class_="messCase1")
 
-        author = case1.find("b", class_="s2").string # TODO remove 'breaking spaces'
-        id = case1.find("a",  rel="nofollow").attrs["href"][2:]
+        author = case1.find("b", class_="s2").string
+        if author == "Publicité":
+            return None
+        
+        id = case1.find("a", rel="nofollow").attrs["href"][2:]
 
         case2 = html.find("td", class_="messCase2")
         timestamp_str = case2.find("div", class_="toolbar").find("div", class_="left").string
@@ -82,6 +104,7 @@ class Message:
     
     @staticmethod
     def parse_timestamp(timestamp_str: str) -> datetime:
-        m = re.search(r"Post. le (\d\d-\d\d-\d\d\d\d)&nbsp;.&nbsp;(\d\d:\d\d:\d\d)&nbsp;&nbsp;", timestamp_str)
-        return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d-%m-%Y %H:%M:%S")
+        d = timestamp_str[9:19]
+        t = timestamp_str[22:30]
+        return datetime.strptime(f"{d} {t}", "%d-%m-%Y %H:%M:%S")
 
