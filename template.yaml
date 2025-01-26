@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  HFRTopicSummarizer  
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 150
+
+# Use the following command to set the stage (devo or prod)
+# sam build && sam deploy --config-env devo
+Parameters: 
+  Environment:
+    Default: devo
+    Description: Environment name
+    Type: String
+    AllowedValues: 
+      - devo
+      - prod
+
+Resources:
+  ApiDeployment:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+  HFRTopicSummarizerFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: hfr_topic_summarizer/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Architectures:
+        - arm64
+      Events:
+        HFRTopicSummarizer:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /hfr_topic_summarizer
+            Method: get
+            RestApiId: !Ref ApiDeployment
+      Environment:
+        Variables:
+          environment: !Ref Environment
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HFRTopicSummarizerApi:
+    Description: API Gateway endpoint URL for HFRTopicSummarizer function
+    Value: !Sub https://${ApiDeployment}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/hfr_topic_summarizer/
+  HFRTopicSummarizerFunction:
+    Description: HFRTopicSummarizer Bot Lambda Function ARN
+    Value: !GetAtt HFRTopicSummarizerFunction.Arn
+  HFRTopicSummarizerFunctionIamRole:
+    Description: Implicit IAM Role created for HFRTopicSummarizer function
+    Value: !GetAtt HFRTopicSummarizerFunctionRole.Arn
