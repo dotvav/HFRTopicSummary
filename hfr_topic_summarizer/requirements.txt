@@ -4,3 +4,4 @@ jsonpickle==1.3
 aws-xray-sdk==2.4.3
 beautifulsoup4
 sortedcontainers
+../../HFR/HFR/dist/hfr_api-0.1.1.tar.gz

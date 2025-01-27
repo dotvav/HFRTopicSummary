@@ -23,11 +23,11 @@ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
 [default.deploy.parameters.parameter_overrides]
 Environment = "devo"
 [devo.deploy.parameters]
-stack_name = "hfr-topic-summarizer-devo"
+stack_name = "devo-hfr-topic-summarizer"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = false
 resolve_s3 = true
-s3_prefix = "HFRTopicSummarizer-devo"
+s3_prefix = "devo-HFRTopicSummarizer"
 region = "eu-west-3"
 image_repositories = []
 parameter_overrides = [
@@ -35,11 +35,11 @@ parameter_overrides = [
 ]
 
 [prod.deploy.parameters]
-stack_name = "hfr-topic-summarizer-prod"
+stack_name = "prod-hfr-topic-summarizer"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = false
 resolve_s3 = true
-s3_prefix = "HFRTopicSummarizer-prod"
+s3_prefix = "prod-HFRTopicSummarizer"
 region = "eu-west-3"
 image_repositories = []
 parameter_overrides = [

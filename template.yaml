@@ -3,13 +3,10 @@ Transform: AWS::Serverless-2016-10-31
 Description: |
   HFRTopicSummarizer  
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
     Timeout: 150
 
-# Use the following command to set the stage (devo or prod)
-# sam build && sam deploy --config-env devo
 Parameters: 
   Environment:
     Default: devo
@@ -20,12 +17,56 @@ Parameters:
       - prod
 
 Resources:
+  # Topics Table
+  TopicsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-hfr-topics
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: topic_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: topic_id  # format: "cat#subcat#post"
+          KeyType: HASH
+
+  # Messages Table
+  MessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-hfr-messages
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  # Summaries Table (with sort key)
+  SummariesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${Environment}-hfr-summaries
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: topic_id
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: topic_id  # format: "cat#subcat#post"
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
   ApiDeployment:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
+
   HFRTopicSummarizerFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function
     Properties:
       CodeUri: hfr_topic_summarizer/
       Handler: app.lambda_handler
@@ -34,7 +75,7 @@ Resources:
         - arm64
       Events:
         HFRTopicSummarizer:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Type: Api
           Properties:
             Path: /hfr_topic_summarizer
             Method: get
@@ -42,11 +83,30 @@ Resources:
       Environment:
         Variables:
           environment: !Ref Environment
+          TOPICS_TABLE: !Ref TopicsTable
+          MESSAGES_TABLE: !Ref MessagesTable
+          SUMMARIES_TABLE: !Ref SummariesTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
+              Resource: 
+                - !GetAtt TopicsTable.Arn
+                - !GetAtt MessagesTable.Arn
+                - !GetAtt SummariesTable.Arn
+                - !Sub "${TopicsTable.Arn}/index/*"
+                - !Sub "${MessagesTable.Arn}/index/*"
+                - !Sub "${SummariesTable.Arn}/index/*"
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
   HFRTopicSummarizerApi:
     Description: API Gateway endpoint URL for HFRTopicSummarizer function
     Value: !Sub https://${ApiDeployment}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/hfr_topic_summarizer/
@@ -56,3 +116,12 @@ Outputs:
   HFRTopicSummarizerFunctionIamRole:
     Description: Implicit IAM Role created for HFRTopicSummarizer function
     Value: !GetAtt HFRTopicSummarizerFunctionRole.Arn
+  TopicsTableName:
+    Description: Name of the Topics DynamoDB table
+    Value: !Ref TopicsTable
+  MessagesTableName:
+    Description: Name of the Messages DynamoDB table
+    Value: !Ref MessagesTable
+  SummariesTableName:
+    Description: Name of the Summaries DynamoDB table
+    Value: !Ref SummariesTable
