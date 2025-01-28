@@ -1,0 +1,20 @@
+{
+    "Records": [
+        {
+            "messageId": "19dd0b57-b21e-4ac1-bd88-01bbb068cb78",
+            "receiptHandle": "MessageReceiptHandle",
+            "body": "{\"topic_id\": \"13#422#108102\", \"date\": \"2025-01-27\", \"status\": \"in_progress\", \"created_at\": \"2025-01-28T10:00:00Z\"}",
+            "attributes": {
+                "ApproximateReceiveCount": "1",
+                "SentTimestamp": "1704067200000",
+                "SenderId": "AROAXXXXXXXXXXXXXXXXX:sender-name",
+                "ApproximateFirstReceiveTimestamp": "1704067200001"
+            },
+            "messageAttributes": {},
+            "md5OfBody": "e4e68fb7bd0e697a0ae8f1bb342846b3",
+            "eventSource": "aws:sqs",
+            "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:my-queue",
+            "awsRegion": "us-east-1"
+        }
+    ]
+}

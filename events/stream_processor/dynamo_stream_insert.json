@@ -1,0 +1,40 @@
+{
+  "Records": [
+    {
+      "eventID": "1",
+      "eventName": "INSERT",
+      "eventVersion": "1.0",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-east-1",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1704067200,
+        "Keys": {
+          "topic_id": {
+            "S": "13#422#108102"
+          },
+          "date": {
+            "S": "2025-01-28"
+          }
+        },
+        "NewImage": {
+          "topic_id": {
+            "S": "13#422#108102"
+          },
+          "date": {
+            "S": "2025-01-28"
+          },
+          "status": {
+            "S": "in_progress"
+          },
+          "created_at": {
+            "S": "2025-01-28T10:00:00Z"
+          }
+        },
+        "SequenceNumber": "111",
+        "SizeBytes": 26,
+        "StreamViewType": "NEW_IMAGE"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-1:123456789012:table/devo-summaries/stream/2024-01-01T00:00:00.000"
+    }
+  ]
+}

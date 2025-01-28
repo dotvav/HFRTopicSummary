@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: |
-  HFRTopicSummarizer  
+  HFR Topic Summarizer System
 
 Globals:
   Function:
@@ -15,26 +15,29 @@ Parameters:
     AllowedValues: 
       - devo
       - prod
+  MaxMessageRetries:
+    Default: 3
+    Description: Maximum number of times a message can be retried
+    Type: Number
 
 Resources:
-  # Topics Table
+  # DynamoDB Tables
   TopicsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-hfr-topics
+      TableName: !Sub ${Environment}-topics
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: topic_id
           AttributeType: S
       KeySchema:
-        - AttributeName: topic_id  # format: "cat#subcat#post"
+        - AttributeName: topic_id
           KeyType: HASH
 
-  # Messages Table
   MessagesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-hfr-messages
+      TableName: !Sub ${Environment}-messages
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: id
@@ -42,12 +45,20 @@ Resources:
       KeySchema:
         - AttributeName: id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: AuthorIndex
+          KeySchema:
+            - AttributeName: author
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
-  # Summaries Table (with sort key)
   SummariesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-hfr-summaries
+      TableName: !Sub ${Environment}-summaries
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: topic_id
@@ -55,34 +66,110 @@ Resources:
         - AttributeName: date
           AttributeType: S
       KeySchema:
-        - AttributeName: topic_id  # format: "cat#subcat#post"
+        - AttributeName: topic_id
           KeyType: HASH
         - AttributeName: date
           KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE  # Only need new items
 
+  # Dead Letter Queue for failed processing
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${Environment}-summarization-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # Main processing queue
+  SummarizationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${Environment}-summarization-queue
+      VisibilityTimeout: 160
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: !Ref MaxMessageRetries
+
+  # API Gateway
   ApiDeployment:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
 
-  HFRTopicSummarizerFunction:
+    RequestHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: hfr_topic_summarizer/
-      Handler: app.lambda_handler
+      CodeUri: src/
+      Handler: request_handler.lambda_handler
       Runtime: python3.13
       Architectures:
         - arm64
+      ReservedConcurrentExecutions: 100
       Events:
-        HFRTopicSummarizer:
+        ApiEndpoint:
           Type: Api
           Properties:
-            Path: /hfr_topic_summarizer
+            Path: /summarize
             Method: get
             RestApiId: !Ref ApiDeployment
       Environment:
         Variables:
-          environment: !Ref Environment
+          SUMMARIES_TABLE: !Ref SummariesTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt SummariesTable.Arn
+
+  # Stream Processor Lambda - Bridges DynamoDB Streams to SQS
+  StreamProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: stream_processor.lambda_handler
+      Runtime: python3.13
+      Architectures:
+        - arm64
+      Events:
+        StreamEvent:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt SummariesTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["INSERT"]}'
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref SummarizationQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt SummarizationQueue.Arn
+
+  # Summary Generator Lambda - Does the actual processing
+  SummaryGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/ 
+      Handler: summary_generator.lambda_handler
+      Runtime: python3.13
+      Architectures:
+        - arm64
+      ReservedConcurrentExecutions: 1
+      Events:
+        QueueProcessor:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SummarizationQueue.Arn
+            BatchSize: 1
+      Environment:
+        Variables:
           TOPICS_TABLE: !Ref TopicsTable
           MESSAGES_TABLE: !Ref MessagesTable
           SUMMARIES_TABLE: !Ref SummariesTable
@@ -97,31 +184,75 @@ Resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:BatchGetItem
-                - dynamodb:BatchWriteItem
               Resource: 
                 - !GetAtt TopicsTable.Arn
                 - !GetAtt MessagesTable.Arn
                 - !GetAtt SummariesTable.Arn
-                - !Sub "${TopicsTable.Arn}/index/*"
                 - !Sub "${MessagesTable.Arn}/index/*"
-                - !Sub "${SummariesTable.Arn}/index/*"
 
 Outputs:
-  HFRTopicSummarizerApi:
-    Description: API Gateway endpoint URL for HFRTopicSummarizer function
-    Value: !Sub https://${ApiDeployment}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/hfr_topic_summarizer/
-  HFRTopicSummarizerFunction:
-    Description: HFRTopicSummarizer Bot Lambda Function ARN
-    Value: !GetAtt HFRTopicSummarizerFunction.Arn
-  HFRTopicSummarizerFunctionIamRole:
-    Description: Implicit IAM Role created for HFRTopicSummarizer function
-    Value: !GetAtt HFRTopicSummarizerFunctionRole.Arn
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ApiDeployment}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/summarize
+
+  # DynamoDB Tables
   TopicsTableName:
-    Description: Name of the Topics DynamoDB table
+    Description: Name of the Topics table
     Value: !Ref TopicsTable
+  TopicsTableArn:
+    Description: ARN of the Topics table
+    Value: !GetAtt TopicsTable.Arn
+
   MessagesTableName:
-    Description: Name of the Messages DynamoDB table
+    Description: Name of the Messages table
     Value: !Ref MessagesTable
+  MessagesTableArn:
+    Description: ARN of the Messages table
+    Value: !GetAtt MessagesTable.Arn
+
   SummariesTableName:
-    Description: Name of the Summaries DynamoDB table
+    Description: Name of the Summaries table
     Value: !Ref SummariesTable
+  SummariesTableArn:
+    Description: ARN of the Summaries table
+    Value: !GetAtt SummariesTable.Arn
+  SummariesTableStreamArn:
+    Description: ARN of the Summaries table stream
+    Value: !GetAtt SummariesTable.StreamArn
+
+  # Queue URLs
+  DeadLetterQueueUrl:
+    Description: URL of the Dead Letter Queue
+    Value: !Ref DeadLetterQueue
+  DeadLetterQueueArn:
+    Description: ARN of the Dead Letter Queue
+    Value: !GetAtt DeadLetterQueue.Arn
+
+  SummarizationQueueUrl:
+    Description: URL of the main processing Queue
+    Value: !Ref SummarizationQueue
+  SummarizationQueueArn:
+    Description: ARN of the main processing Queue
+    Value: !GetAtt SummarizationQueue.Arn
+
+  # Lambda Functions
+  RequestHandlerFunctionArn:
+    Description: ARN of the Request Handler Lambda function
+    Value: !GetAtt RequestHandlerFunction.Arn
+  RequestHandlerFunctionRole:
+    Description: IAM Role created for Request Handler Lambda function
+    Value: !GetAtt RequestHandlerFunctionRole.Arn
+
+  StreamProcessorFunctionArn:
+    Description: ARN of the Stream Processor Lambda function
+    Value: !GetAtt StreamProcessorFunction.Arn
+  StreamProcessorFunctionRole:
+    Description: IAM Role created for Stream Processor Lambda function
+    Value: !GetAtt StreamProcessorFunctionRole.Arn
+
+  SummaryGeneratorFunctionArn:
+    Description: ARN of the Summary Generator Lambda function
+    Value: !GetAtt SummaryGeneratorFunction.Arn
+  SummaryGeneratorFunctionRole:
+    Description: IAM Role created for Summary Generator Lambda function
+    Value: !GetAtt SummaryGeneratorFunctionRole.Arn
