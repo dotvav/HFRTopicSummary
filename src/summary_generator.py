@@ -6,9 +6,11 @@ from typing import Dict, Any
 from hfr import Topic
 from datetime import date, datetime, timedelta
 
+
+MESSAGE_COUNT_LIMIT = 1000
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     """Process messages from SQS and generate summaries."""
@@ -26,12 +28,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
             date = message['date']
 
             logger.info("Processing summary for topic: %s, date: %s", topic_id, date)
-
-            # TODO: Implement summary generation logic:
-            # 1. Get topic info from topics_table
-            # 2. Get messages from messages_table
-            # 3. Generate summary (your logic here)
-            # 4. Update summaries_table with result and status='completed'
 
             # Set dates up
             today = date.today()
@@ -68,15 +64,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
                 logger.debug(f"No messages at date {str(yesterday)}")
                 messages = ()
 
-            return {
-                "isBase64Encoded": False,
-                "statusCode": 200,
-                "headers": { "Content-Type": "application/json" },
-                "body": f"Messages count: {len(messages)}"
-            }
-
-
-
+            # TODO Make a doc
+            # TODO Submit the doc for summary
+            # TODO Store the summary in the table and update the status
 
         except Exception as e:
             logger.error(
