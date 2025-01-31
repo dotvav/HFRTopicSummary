@@ -25,7 +25,7 @@ Resources:
   TopicsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-topics
+      TableName: !Sub ${Environment}-hfr-topics
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: topic_id
@@ -37,11 +37,15 @@ Resources:
   MessagesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-messages
+      TableName: !Sub ${Environment}-hfr-messages
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
+        - AttributeName: author    
+          AttributeType: S
+        - AttributeName: timestamp 
+          AttributeType: N
       KeySchema:
         - AttributeName: id
           KeyType: HASH
@@ -58,7 +62,7 @@ Resources:
   SummariesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${Environment}-summaries
+      TableName: !Sub ${Environment}-hfr-summaries
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: topic_id
@@ -73,18 +77,16 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_IMAGE  # Only need new items
 
-  # Dead Letter Queue for failed processing
   DeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub ${Environment}-summarization-dlq
+      # Remove QueueName property
       MessageRetentionPeriod: 1209600  # 14 days
 
-  # Main processing queue
   SummarizationQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub ${Environment}-summarization-queue
+      # Remove QueueName property
       VisibilityTimeout: 160
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
@@ -96,7 +98,7 @@ Resources:
     Properties:
       StageName: !Ref Environment
 
-    RequestHandlerFunction:
+  RequestHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/
@@ -104,7 +106,7 @@ Resources:
       Runtime: python3.13
       Architectures:
         - arm64
-      ReservedConcurrentExecutions: 100
+      # Removed ReservedConcurrentExecutions
       Events:
         ApiEndpoint:
           Type: Api
@@ -152,7 +154,6 @@ Resources:
                 - sqs:SendMessage
               Resource: !GetAtt SummarizationQueue.Arn
 
-  # Summary Generator Lambda - Does the actual processing
   SummaryGeneratorFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -161,7 +162,6 @@ Resources:
       Runtime: python3.13
       Architectures:
         - arm64
-      ReservedConcurrentExecutions: 1
       Events:
         QueueProcessor:
           Type: SQS
@@ -189,6 +189,11 @@ Resources:
                 - !GetAtt MessagesTable.Arn
                 - !GetAtt SummariesTable.Arn
                 - !Sub "${MessagesTable.Arn}/index/*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub "arn:aws:bedrock:${AWS::Region}::model/*"
 
 Outputs:
   ApiEndpoint:

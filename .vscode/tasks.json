@@ -1,0 +1,65 @@
+{
+    "version": "2.0.0",
+    "inputs": [
+        {
+            "type": "pickString",
+            "id": "environment",
+            "description": "Select the environment",
+            "options": ["devo", "prod"],
+            "default": "devo"
+        }
+    ],
+    "tasks": [
+        {
+            "label": "Ensure env.json exists",
+            "detail": "Creates env.json from example if missing",
+            "type": "shell",
+            "command": "if [ ! -f env.json ]; then if [ -f env.json.example ]; then cp env.json.example env.json && echo '✅ Created env.json from example. Please review and edit as needed.'; else echo '❌ Neither env.json nor env.json.example found'; exit 1; fi; else echo '✅ env.json found'; fi",
+            "presentation": {
+                "reveal": "always",
+                "revealProblems": "onProblem"
+            }
+        },
+        {
+            "label": "SAM build if needed",
+            "detail": "Builds only if source files changed",
+            "type": "shell",
+            "command": "echo 'Checking build status...' && if [ ! -d .aws-sam ]; then echo 'No .aws-sam directory, build needed' && sam build --config-env ${input:environment}; elif find src template.yaml -type f -newer .aws-sam/build.toml 2>/dev/null | grep -q .; then echo 'Changed files found:' && find src template.yaml -type f -newer .aws-sam/build.toml && sam build --config-env ${input:environment}; else echo 'No build needed'; fi",
+            "presentation": {
+                "reveal": "always"
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Local Invoke: Summary Generator",
+            "detail": "Runs lambda locally with test event",
+            "type": "shell",
+            "command": "sam local invoke SummaryGeneratorFunction -e events/summary_generator/sqs_event.json --env-vars env.json --config-env ${input:environment}",
+            "dependsOn": [
+                "Ensure env.json exists",
+                "SAM build if needed"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Deploy to AWS",
+            "detail": "Deploys stack to selected environment",
+            "type": "shell",
+            "command": "sam deploy --config-env ${input:environment}",
+            "dependsOn": ["SAM build if needed"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

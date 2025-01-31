@@ -3,14 +3,165 @@ import json
 import boto3
 import logging
 from typing import Dict, Any
-from hfr import Topic
-from datetime import date, datetime, timedelta
+from hfr import Topic, Message
+from datetime import datetime, timedelta, timezone
+import re
 
 
 MESSAGE_COUNT_LIMIT = 1000
 
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
+
+bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-3")
+#bedrock_model_id = "eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
+bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+def extract_data_from_claude_response(text) -> dict:
+    """Extract JSON from Claude's response that might contain additional text"""
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    if json_match:
+        json_string = json_match.group(0)
+        try:
+            return json.loads(json_string)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON format: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "json_string": json_string,
+            }
+    return {
+        "success": False,
+        "error": "Can't find the data in the text.",
+        "json_string": json_string,
+    }
+
+def should_process_summary(summaries_table, topic_id, date):
+    """
+    Check and update summary status based on complex conditions.
+    Returns True if we should process this summary, False otherwise.
+    """
+    now = datetime.now(timezone.utc)
+    three_hours_ago = now - timedelta(hours=3)
+    
+    try:
+        response = summaries_table.update_item(
+            Key={
+                'topic_id': topic_id,
+                'date': date
+            },
+            UpdateExpression='SET status = :new_status, last_updated = :now',
+            ConditionExpression=(
+                'attribute_not_exists(status) OR '                    # No record exists
+                'status = :error_status OR '                         # Status is "error"
+                '(status = :init_status AND last_updated < :stale)'  # Status "in_progress" but stale
+            ),
+            ExpressionAttributeValues={
+                ':new_status': 'in_progress',
+                ':error_status': 'error',
+                ':init_status': 'in_progress',
+                ':stale': three_hours_ago.isoformat(),
+                ':now': now.isoformat()
+            },
+            ReturnValues='NONE'
+        )
+        return True  # Update succeeded, we should process
+
+    except summaries_table.meta.client.exceptions.ConditionalCheckFailedException:
+        # Update failed because conditions weren't met (completed or recent in_progress)
+        return False
+
+def get_messages(topic: Topic, summary_date_str) -> list[Message]:
+    summary_date = datetime.strptime(summary_date_str, "%Y-%m-%d").date()    
+    before_date = summary_date - timedelta(days=1)
+    before_date_str = str(before_date)
+
+    # Load the topic's first and last pages
+    topic.load_page(1)
+    logger.debug(f"Page 1 loaded, topic.max_page={topic.max_page}")
+    if topic.max_page and topic.max_page > 1:
+        topic.load_page(topic.max_page)
+        logger.debug(f"Page {topic.max_page} loaded")
+    
+    # Find out what is the last message's date
+    logger.debug(f"Topic's max_date={topic.max_date}")
+
+    # If the last message date is after today 00:00, load previous pages until we have all of yesterday
+    if topic.max_date >= str(summary_date_str):
+        logger.debug(f"Have we fetched before yesterday? = {before_date_str in topic.messages.keys()}")
+        page = topic.max_page - 1
+        while page > 1 and not topic.has_date(before_date_str):
+            logger.debug(f"Now loading page {page}")
+            topic.load_page(page)
+            page -= 1
+
+    # Now extract the last `MESSAGE_COUNT_LIMIT` messages of yesterday
+    if topic.has_date(summary_date_str):
+        messages = topic.messages_on_date(summary_date_str)
+        if len(messages) > MESSAGE_COUNT_LIMIT:
+            messages = messages[-MESSAGE_COUNT_LIMIT:]
+        logger.debug(f"Yesterday's messages count = {len(topic.messages_on_date(summary_date_str))}, selected messages {len(messages)}")
+    else:
+        logger.debug(f"No messages at date {summary_date_str}")
+        messages = ()
+
+def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> dict:
+    # Make a doc
+    topic_data = json.dumps(
+        {
+            "title": topic.title,
+            "date": date_str,
+            "messages": [message.to_dict() for message in messages]
+        },
+        indent=4
+    )
+
+    # Submit the doc for summary
+    bedrock_request = {
+        "modelId": bedrock_model_id,
+        "body": json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1000,
+            "temperature": 0.3,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"""
+                        Voici un document JSON qui contient tous les messages d'une journée d'un topic HFR (forum.hardware.fr). 
+                        Résume le en 300 à 500 mots en suivant le format JSON suivant et respecte les consignes qui suivent :
+                        {{
+                            "success": "true",
+                            "topic": "Le titre du topic",
+                            "date": "La date de la discussion au format YYYY-MM-DD",
+                            "summary": "Le résumé ici."
+                        }}
+                        Le résumé ne contient que le résumé de la discussion, aucune référence à cette requête, ce prompt, ou au format des messages et de la réponse. Le résumé se concentre sur le contenu des messages, pas sur le thème général du topic. Le lecteur a déjà accès au titre du topic et au contexte, inutile de les répéter ou de les résumer.
+                        Le résumé est dans la langue principale de la conversation, même si celle-ci contient des expressions ou des citations dans d'autres langues.
+                        Le résumé mentionne les messages les plus importants ou remarquables ainsi que le nom de leurs auteurs et de ceux qui leur répondent, le nombre de réactions ou de citation. Les messages importants ou remarquables sont ceux qui ont généré beaucoup de réactions ou ont été cités de nombreuses fois. Il indique quelles questions ou opinions ont été débattues.
+                        Voici la discussion à résumer :
+                        {json.dumps(topic_data, indent=2)}
+                        """
+                }
+            ],
+        })}
+    try:
+        bedrock_response = bedrock_client.invoke_model(**bedrock_request)
+        response_body = json.loads(bedrock_response['body'].read())
+        bedrock_data = response_body['content'][0]['text']
+        bedrock_data = extract_data_from_claude_response(bedrock_data)
+    except Exception as e:
+        logger.error(e)
+        bedrock_data = {
+            "success": False,
+            "error": str(e),
+            "json_string": json.dumps(bedrock_request),
+        }
+
+    logger.debug(bedrock_data)
+                    
+    return json.loads(bedrock_data)
+
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     """Process messages from SQS and generate summaries."""
@@ -22,51 +173,50 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     summaries_table = dynamodb.Table(os.environ['SUMMARIES_TABLE'])
 
     for record in event['Records']:
+        message = json.loads(record['body'])
+        topic_id = message['topic_id']
+        date_str = message['date']
+
         try:
-            message = json.loads(record['body'])
-            topic_id = message['topic_id']
-            date = message['date']
-
-            logger.info("Processing summary for topic: %s, date: %s", topic_id, date)
-
-            # Set dates up
-            today = date.today()
-            yesterday = today - timedelta(days=1)
-            before_yesterday = today - timedelta(days=2)
-            logger.debug(f"Today={today}, yesterday={yesterday}, before_yesterday={before_yesterday}")
-
-            # Load the topic's first and last pages
+            logger.info("Processing summary for topic: %s, date: %s", topic_id, date_str)
             (cat, subcat, post) = str.split(topic_id, "#")
             topic = Topic(cat, subcat, post)
-            topic.load_page(1)
-            logger.debug(f"Page 1 loaded, topic.max_page={topic.max_page}")
-            if topic.max_page and topic.max_page > 1:
-                topic.load_page(topic.max_page)
-                logger.debug(f"Page {topic.max_page} loaded")
-            
-            # Find out what is the last message's date
-            logger.debug(f"Topic's max_date={topic.max_date}")
+            messages = get_messages(topic, date_str)
 
-            # If the last message date is after today 00:00, load previous pages until we have all of yesterday
-            if topic.max_date >= str(today):
-                logger.debug(f"Have we fetched before yesterday? = {str(before_yesterday) in topic.messages.keys()}")
-                page = topic.max_page - 1
-                while page > 1 and not topic.has_date(str(before_yesterday)):
-                    logger.debug(f"Now loading page {page}")
-                    topic.load_page(page)
-                    page -= 1
+            if messages:
+                summary_data = get_summary_data(topic, date_str, messages)
 
-            # Now extract the last `MESSAGE_COUNT_LIMIT` messages of yesterday
-            if topic.has_date(str(yesterday)):
-                logger.debug(f"Yesterday's messages count = {len(topic.messages[str(yesterday)])}")
-                messages = topic.messages_on_date(str(yesterday))[-1:-MESSAGE_COUNT_LIMIT]
+                if summary_data["success"]:
+                    # Store the summary in the table and update the status
+                    new_summary = {
+                        "topic_id": topic_id,
+                        "date": date_str,
+                        "status": "completed",
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
+                        "summary": summary_data["summary"]
+                    }
+                    summaries_table.put_item(Item=new_summary)
+                else:
+                    new_summary = {
+                        "topic_id": topic_id,
+                        "date": date_str,
+                        "status": "error",
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
+                        "summary": "Une erreur est survenue",
+                        "error_details": summary_data.get("error", "An unknown error has occured")
+                    }
+                    summaries_table.put_item(Item=new_summary)
+
             else:
-                logger.debug(f"No messages at date {str(yesterday)}")
-                messages = ()
-
-            # TODO Make a doc
-            # TODO Submit the doc for summary
-            # TODO Store the summary in the table and update the status
+                # When there are no messages to summarize, store a short information
+                new_summary = {
+                    "topic_id": topic_id,
+                    "date": date_str,
+                    "status": "completed",
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "summary": "Aucun message"
+                }
+                summaries_table.put_item(Item=new_summary)
 
         except Exception as e:
             logger.error(
