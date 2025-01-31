@@ -6,6 +6,8 @@ Description: |
 Globals:
   Function:
     Timeout: 150
+    LoggingConfig:
+      RetentionInDays: 7
 
 Parameters: 
   Environment:

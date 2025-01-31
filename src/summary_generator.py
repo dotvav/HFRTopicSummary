@@ -43,7 +43,7 @@ def should_process_summary(summaries_table, topic_id, date):
     Returns True if we should process this summary, False otherwise.
     """
     now = datetime.now(timezone.utc)
-    three_hours_ago = now - timedelta(hours=3)
+    one_hour_ago = now - timedelta(hours=1)
     
     try:
         response = summaries_table.update_item(
@@ -61,7 +61,7 @@ def should_process_summary(summaries_table, topic_id, date):
                 ':new_status': 'in_progress',
                 ':error_status': 'error',
                 ':init_status': 'in_progress',
-                ':stale': three_hours_ago.isoformat(),
+                ':stale': one_hour_ago.isoformat(),
                 ':now': now.isoformat()
             },
             ReturnValues='NONE'
