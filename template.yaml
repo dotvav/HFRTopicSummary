@@ -6,8 +6,6 @@ Description: |
 Globals:
   Function:
     Timeout: 150
-    LoggingConfig:
-      RetentionInDays: 7
 
 Parameters: 
   Environment:
@@ -21,6 +19,15 @@ Parameters:
     Default: 3
     Description: Maximum number of times a message can be retried
     Type: Number
+  LogLevel:
+    Type: String
+    Default: WARNING
+    AllowedValues:
+      - DEBUG
+      - INFO
+      - WARNING
+      - ERROR
+      - CRITICAL
 
 Resources:
   # DynamoDB Tables
@@ -119,6 +126,7 @@ Resources:
       Environment:
         Variables:
           SUMMARIES_TABLE: !Ref SummariesTable
+          LOG_LEVEL: !Ref LogLevel
       Policies:
         - Statement:
             - Effect: Allow
@@ -127,6 +135,13 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt SummariesTable.Arn
+
+  RequestHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: RequestHandlerFunction
+    Properties:
+      RetentionInDays: 7
+      LogGroupName: !Sub "/aws/lambda/${RequestHandlerFunction}"
 
   # Stream Processor Lambda - Bridges DynamoDB Streams to SQS
   StreamProcessorFunction:
@@ -149,12 +164,20 @@ Resources:
       Environment:
         Variables:
           QUEUE_URL: !Ref SummarizationQueue
+          LOG_LEVEL: !Ref LogLevel
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - sqs:SendMessage
               Resource: !GetAtt SummarizationQueue.Arn
+
+  StreamProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: StreamProcessorFunction
+    Properties:
+      RetentionInDays: 7
+      LogGroupName: !Sub "/aws/lambda/${StreamProcessorFunction}"
 
   SummaryGeneratorFunction:
     Type: AWS::Serverless::Function
@@ -175,6 +198,7 @@ Resources:
           TOPICS_TABLE: !Ref TopicsTable
           MESSAGES_TABLE: !Ref MessagesTable
           SUMMARIES_TABLE: !Ref SummariesTable
+          LOG_LEVEL: !Ref LogLevel
       Policies:
         - Statement:
             - Effect: Allow
@@ -196,6 +220,13 @@ Resources:
                 - bedrock:InvokeModel
               Resource:
                 - !Sub "arn:aws:bedrock:${AWS::Region}::model/*"
+
+  SummaryGeneratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: SummaryGeneratorFunction
+    Properties:
+      RetentionInDays: 7
+      LogGroupName: !Sub "/aws/lambda/${SummaryGeneratorFunction}"
 
 Outputs:
   ApiEndpoint:

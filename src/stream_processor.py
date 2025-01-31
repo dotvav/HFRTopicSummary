@@ -42,7 +42,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
                 QueueUrl=queue_url,
                 MessageBody=json.dumps(message)
             )
-            logger.info("Message sent to SQS for topic: %s", message['topic_id'])
+            logger.info("Message sent to SQS for topic '%s' and date '%s'", message['topic_id'], message['date'])
 
         except Exception as e:
             logger.error(

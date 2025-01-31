@@ -11,7 +11,12 @@ import re
 MESSAGE_COUNT_LIMIT = 1000
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+log_level = os.environ.get('LOG_LEVEL', 'WARNING').upper()
+try:
+    logger.setLevel(getattr(logging, log_level))
+except (AttributeError, TypeError):
+    logger.setLevel(logging.WARNING)
+    logger.warning(f"Invalid LOG_LEVEL '{log_level}', defaulting to WARNING")
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-3")
 #bedrock_model_id = "eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
@@ -33,8 +38,8 @@ def extract_data_from_claude_response(text) -> dict:
             }
     return {
         "success": False,
-        "error": "Can't find the data in the text.",
-        "json_string": json_string,
+        "error": "Can't find the data in the generated text.",
+        "json_string": text,
     }
 
 def should_process_summary(summaries_table, topic_id, date):
@@ -106,6 +111,8 @@ def get_messages(topic: Topic, summary_date_str) -> list[Message]:
         logger.debug(f"No messages at date {summary_date_str}")
         messages = ()
 
+    return messages
+
 def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> dict:
     # Make a doc
     topic_data = json.dumps(
@@ -129,13 +136,14 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
                     "role": "user",
                     "content": f"""
                         Voici un document JSON qui contient tous les messages d'une journée d'un topic HFR (forum.hardware.fr). 
-                        Résume le en 300 à 500 mots en suivant le format JSON suivant et respecte les consignes qui suivent :
+                        Résume le en 300 à 500 mots en utilisant UNIQUEMENT et EXACTEMENT le format JSON suivant, sans texte avant ni après :
                         {{
                             "success": "true",
                             "topic": "Le titre du topic",
                             "date": "La date de la discussion au format YYYY-MM-DD",
                             "summary": "Le résumé ici."
                         }}
+                        Il est très important que tu observes et respectes strictement les consignes suivantes :
                         Le résumé ne contient que le résumé de la discussion, aucune référence à cette requête, ce prompt, ou au format des messages et de la réponse. Le résumé se concentre sur le contenu des messages, pas sur le thème général du topic. Le lecteur a déjà accès au titre du topic et au contexte, inutile de les répéter ou de les résumer.
                         Le résumé est dans la langue principale de la conversation, même si celle-ci contient des expressions ou des citations dans d'autres langues.
                         Le résumé mentionne les messages les plus importants ou remarquables ainsi que le nom de leurs auteurs et de ceux qui leur répondent, le nombre de réactions ou de citation. Les messages importants ou remarquables sont ceux qui ont généré beaucoup de réactions ou ont été cités de nombreuses fois. Il indique quelles questions ou opinions ont été débattues.
@@ -160,7 +168,7 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
 
     logger.debug(bedrock_data)
                     
-    return json.loads(bedrock_data)
+    return bedrock_data
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:

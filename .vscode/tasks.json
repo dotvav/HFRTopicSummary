@@ -17,6 +17,7 @@
             "command": "if [ ! -f env.json ]; then if [ -f env.json.example ]; then cp env.json.example env.json && echo '✅ Created env.json from example. Please review and edit as needed.'; else echo '❌ Neither env.json nor env.json.example found'; exit 1; fi; else echo '✅ env.json found'; fi",
             "presentation": {
                 "reveal": "always",
+                "echo": false,
                 "revealProblems": "onProblem"
             }
         },

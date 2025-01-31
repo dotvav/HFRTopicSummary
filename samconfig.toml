@@ -13,7 +13,6 @@ parallel = true
 [default.validate.parameters]
 lint = true
 
-
 [default.deploy.parameters]
 confirm_changeset = false
 stack_name = "hfr_topic_summarizer"
@@ -22,6 +21,7 @@ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
 
 [default.deploy.parameters.parameter_overrides]
 Environment = "devo"
+
 [devo.deploy.parameters]
 stack_name = "devo-hfr-topic-summarizer"
 capabilities = "CAPABILITY_IAM"
@@ -31,7 +31,8 @@ s3_prefix = "devo-HFRTopicSummarizer"
 region = "eu-west-3"
 image_repositories = []
 parameter_overrides = [
-  "Environment=devo"
+  "Environment=devo",
+  "LogLevel=DEBUG"
 ]
 
 [prod.deploy.parameters]
@@ -43,7 +44,8 @@ s3_prefix = "prod-HFRTopicSummarizer"
 region = "eu-west-3"
 image_repositories = []
 parameter_overrides = [
-  "Environment=prod"
+  "Environment=prod",
+  "LogLevel=INFO"
 ]
 
 [default.package.parameters]
