@@ -219,7 +219,7 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - !Sub "arn:aws:bedrock:${AWS::Region}::model/*"
+                - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/*"
 
   SummaryGeneratorLogGroup:
     Type: AWS::Logs::LogGroup

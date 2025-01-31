@@ -2,7 +2,7 @@ import os
 import json
 import boto3
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
 
 
@@ -10,9 +10,12 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def validate_request(topic_id: str, date: str) -> bool:
-    """Validate request parameters."""
-    if not topic_id or not date:
+def validate_request(topic_id: str, date_str: str) -> bool:
+    """
+    Validate request parameters.
+    Only allows past dates (yesterday and before).
+    """
+    if not topic_id or not date_str:
         return False
     
     # Validate topic_id format (category#subcategory#post)
@@ -21,7 +24,13 @@ def validate_request(topic_id: str, date: str) -> bool:
     
     # Validate date format (YYYY-MM-DD)
     try:
-        datetime.strptime(date, '%Y-%m-%d')
+        request_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        today = datetime.now(timezone.utc).date()
+        
+        # Check if date is in the past
+        if request_date >= today:
+            return False
+            
         return True
     except ValueError:
         return False
@@ -40,7 +49,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {
             'statusCode': 400,
             'body': json.dumps({
-                'error': 'Invalid parameters. Expected: topic_id (cat#subcat#post) and date (YYYY-MM-DD)'
+                'error': 'Invalid parameters. Expected: topic_id (cat#subcat#post) and date (YYYY-MM-DD) before today'
             })
         }
 
@@ -54,10 +63,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
         if 'Item' in response:
-            return {
-                'statusCode': 200,
-                'body': json.dumps(response['Item'])
-            }
+            status = response['Item']['status']
+            how_long_ago = datetime.now(timezone.utc) - datetime.fromisoformat(response['Item']['last_updated'])
+            if how_long_ago <= timedelta(hours=1) or (status not in ['error', 'in_progress']):
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps(response['Item'])
+                }
 
         # Create new summary request
         new_summary = {
