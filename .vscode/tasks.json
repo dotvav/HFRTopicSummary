@@ -25,7 +25,7 @@
             "label": "SAM build if needed",
             "detail": "Builds only if source files changed",
             "type": "shell",
-            "command": "echo 'Checking build status...' && if [ ! -d .aws-sam ]; then echo 'No .aws-sam directory, build needed' && sam build --config-env ${input:environment}; elif find src template.yaml -type f -newer .aws-sam/build.toml 2>/dev/null | grep -q .; then echo 'Changed files found:' && find src template.yaml -type f -newer .aws-sam/build.toml && sam build --config-env ${input:environment}; else echo 'No build needed'; fi",
+            "command": "echo 'Checking build status...' && if [ ! -d .aws-sam ]; then echo 'No .aws-sam directory, build needed' && sam build --config-env ${input:environment}; elif find src template.yaml samconfig.toml -type f -newer .aws-sam/build.toml 2>/dev/null | grep -q .; then echo 'Changed files found:' && find src template.yaml -type f -newer .aws-sam/build.toml && sam build --config-env ${input:environment}; else echo 'No build needed'; fi",
             "presentation": {
                 "reveal": "always"
             },

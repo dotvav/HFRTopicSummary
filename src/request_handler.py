@@ -40,6 +40,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Handle API Gateway requests to check or create summary requests."""
     logger.info("Processing request: %s", json.dumps(event))
 
+    # Common headers for all responses
+    headers = {
+        'Access-Control-Allow-Origin': '*',  # Or specific domain
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+        'Access-Control-Allow-Methods': 'GET,OPTIONS'
+    }
+
     # Get and validate parameters
     params = event.get('queryStringParameters', {})
     topic_id = params.get('topic_id')
@@ -48,6 +55,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not validate_request(topic_id, date):
         return {
             'statusCode': 400,
+            'headers': headers,
             'body': json.dumps({
                 'error': 'Invalid parameters. Expected: topic_id (cat#subcat#post) and date (YYYY-MM-DD) before today'
             })
@@ -68,6 +76,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if how_long_ago <= timedelta(hours=1) or (status not in ['error', 'in_progress']):
                 return {
                     'statusCode': 200,
+                    'headers': headers,
                     'body': json.dumps(response['Item'])
                 }
 
@@ -76,12 +85,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'topic_id': topic_id,
             'date': date,
             'status': 'in_progress',
-            'created_at': datetime.now(timezone.utc).isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'last_updated': datetime.now(timezone.utc).isoformat()
         }
         table.put_item(Item=new_summary)
 
         return {
             'statusCode': 202,
+            'headers': headers,
             'body': json.dumps(new_summary)
         }
 
@@ -89,6 +100,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.error("Error: %s", str(e), exc_info=True)
         return {
             'statusCode': 500,
+            'headers': headers,
             'body': json.dumps({'error': 'Internal server error'})
         }
 

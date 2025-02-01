@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any
 from hfr import Topic, Message
 from datetime import datetime, timedelta, timezone
+from botocore.exceptions import ClientError
 import re
 
 
@@ -19,8 +20,12 @@ except (AttributeError, TypeError):
     logger.warning(f"Invalid LOG_LEVEL '{log_level}', defaulting to WARNING")
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-3")
-#bedrock_model_id = "eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
 bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+dynamodb = boto3.resource('dynamodb')
+topics_table = dynamodb.Table(os.environ['TOPICS_TABLE'])
+messages_table = dynamodb.Table(os.environ['MESSAGES_TABLE'])
+summaries_table = dynamodb.Table(os.environ['SUMMARIES_TABLE'])
 
 def extract_data_from_claude_response(text) -> dict:
     """Extract JSON from Claude's response that might contain additional text"""
@@ -77,8 +82,46 @@ def should_process_summary(summaries_table, topic_id, date):
         # Update failed because conditions weren't met (completed or recent in_progress)
         return False
 
-def get_messages(topic: Topic, summary_date_str) -> list[Message]:
-    summary_date = datetime.strptime(summary_date_str, "%Y-%m-%d").date()    
+def load_messages_from_ddb(topic: Topic, summary_date_str: str) -> list[Message]:
+    date = datetime.strptime(summary_date_str, '%Y-%m-%d')
+    start_ts = int((datetime(date.year, date.month, date.day, tzinfo=timezone.utc) - timedelta(days=1)).timestamp())
+    end_ts = int((datetime(date.year, date.month, date.day, tzinfo=timezone.utc) + timedelta(days=1)).timestamp())
+    
+    messages = []
+    last_evaluated_key = None
+    
+    try:
+        while True:
+            query_args = {
+                'IndexName': 'TopicDateIndex',
+                'KeyConditionExpression': 'topic_id = :tid AND posted_at BETWEEN :start AND :end',
+                'ExpressionAttributeValues': {
+                    ':tid': topic.id,
+                    ':start': start_ts,
+                    ':end': end_ts
+                }
+            }
+            
+            if last_evaluated_key:
+                query_args['ExclusiveStartKey'] = last_evaluated_key
+            
+            response = messages_table.query(**query_args)
+            messages.extend(Message.from_dict(topic, item) for item in response.get('Items', []))
+            
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
+                
+        for message in messages:
+            topic.add_message(message)
+        
+    except ClientError as e:
+        logger.error(f"DynamoDB error querying messages: {e}")
+        raise
+
+def load_messages_from_web(topic: Topic, summary_date_str: str, add_to_cache: bool = False):
+    summary_datetime = datetime.strptime(summary_date_str, "%Y-%m-%d")   
+    summary_date = summary_datetime.date()    
     before_date = summary_date - timedelta(days=1)
     before_date_str = str(before_date)
 
@@ -93,12 +136,14 @@ def get_messages(topic: Topic, summary_date_str) -> list[Message]:
     logger.debug(f"Topic's max_date={topic.max_date}")
 
     # If the last message date is after today 00:00, load previous pages until we have all of yesterday
-    if topic.max_date >= str(summary_date_str):
-        logger.debug(f"Have we fetched before yesterday? = {before_date_str in topic.messages.keys()}")
+    if topic.max_date >= summary_date_str:
+        logger.debug(f"Have we fetched before yesterday? = {topic.has_date(before_date_str)}")
         page = topic.max_page - 1
-        while page > 1 and not topic.has_date(before_date_str):
+        earliest_fetched_datetime = summary_datetime
+        while page > 1 and earliest_fetched_datetime >= summary_datetime:
             logger.debug(f"Now loading page {page}")
-            topic.load_page(page)
+            res = topic.load_page(page)
+            earliest_fetched_datetime = res["ts_min"]
             page -= 1
 
     # Now extract the last `MESSAGE_COUNT_LIMIT` messages of yesterday
@@ -111,7 +156,30 @@ def get_messages(topic: Topic, summary_date_str) -> list[Message]:
         logger.debug(f"No messages at date {summary_date_str}")
         messages = ()
 
-    return messages
+    # Store messages in DynamoDB
+    if messages and add_to_cache:
+        try:
+            with messages_table.batch_writer() as batch:
+                for message in messages:
+                    item = {
+                        'id': message.id,
+                        'topic_id': topic.id,
+                        'posted_at': int(message.posted_at.timestamp()),
+                        'author': message.author,
+                        'text': message.text
+                    }
+                    batch.put_item(Item=item)
+            logger.info(f"Stored {len(messages)} messages in DynamoDB for topic {topic.id} on {summary_date_str}")
+        
+        except messages_table.meta.client.exceptions.ClientError as e:
+            logger.error(f"Failed to store messages in DynamoDB: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error storing messages: {e}")
+            raise
+
+    for message in messages:
+        topic.add_message(message)
 
 def get_prompt_template():
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -147,29 +215,37 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
     try:
         bedrock_response = bedrock_client.invoke_model(**bedrock_request)
         response_body = json.loads(bedrock_response['body'].read())
-        bedrock_data = response_body['content'][0]['text']
-        bedrock_data = extract_data_from_claude_response(bedrock_data)
+        summary = response_body['content'][0]['text']
+        return_data = {
+            "success": True,
+            "summary": summary
+        }
     except Exception as e:
         logger.error(e)
-        bedrock_data = {
+        return_data = {
             "success": False,
             "error": str(e),
             "json_string": json.dumps(bedrock_request),
         }
 
-    logger.debug(bedrock_data)
+    logger.debug(return_data)
                     
-    return bedrock_data
+    return return_data
+
+def get_topic(cat, subcat, post) -> Topic:
+    topic_id = f"{cat}{subcat}{post}"
+    response = topics_table.get_item(
+            Key={'topic_id': topic_id}
+        )
+    if 'Item' in response:
+        return Topic.from_dict()
+    else:
+        return Topic(cat, subcat, post)
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     """Process messages from SQS and generate summaries."""
     logger.info("Processing SQS event: %s", json.dumps(event))
-
-    dynamodb = boto3.resource('dynamodb')
-    topics_table = dynamodb.Table(os.environ['TOPICS_TABLE'])
-    messages_table = dynamodb.Table(os.environ['MESSAGES_TABLE'])
-    summaries_table = dynamodb.Table(os.environ['SUMMARIES_TABLE'])
 
     for record in event['Records']:
         message = json.loads(record['body'])
@@ -180,10 +256,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
             logger.info("Processing summary for topic: %s, date: %s", topic_id, date_str)
             (cat, subcat, post) = str.split(topic_id, "#")
             topic = Topic(cat, subcat, post)
-            messages = get_messages(topic, date_str)
+            load_messages_from_ddb(topic, date_str)
+            if not topic.has_date(date_str) or not topic.has_date(datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=1)):
+                load_messages_from_web(topic, date_str, True)
 
+            messages = topic.messages_on_date(date_str)
             if messages:
-                summary_data = get_summary_data(topic, date_str, messages)
+                try:
+                    summary_data = get_summary_data(topic, date_str, messages)
+                except Exception as e:
+                    logger.error(
+                        "Error processing message: %s. Message: %s",
+                        str(e),
+                        json.dumps(message),
+                        exc_info=True
+                        )
+                    summary_data = {
+                        "status": "error",
+                        "error": str(e)
+                    }
 
                 if summary_data["success"]:
                     # Store the summary in the table and update the status

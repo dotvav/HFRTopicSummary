@@ -5,7 +5,7 @@ Description: |
 
 Globals:
   Function:
-    Timeout: 150
+    Timeout: 300
 
 Parameters: 
   Environment:
@@ -51,9 +51,11 @@ Resources:
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
+        - AttributeName: topic_id
+          AttributeType: S
         - AttributeName: author    
           AttributeType: S
-        - AttributeName: timestamp 
+        - AttributeName: posted_at 
           AttributeType: N
       KeySchema:
         - AttributeName: id
@@ -63,10 +65,19 @@ Resources:
           KeySchema:
             - AttributeName: author
               KeyType: HASH
-            - AttributeName: timestamp
+            - AttributeName: posted_at
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+        - IndexName: TopicDateIndex
+          KeySchema:
+            - AttributeName: topic_id
+              KeyType: HASH
+            - AttributeName: posted_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
 
   SummariesTable:
     Type: AWS::DynamoDB::Table
@@ -96,7 +107,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       # Remove QueueName property
-      VisibilityTimeout: 160
+      VisibilityTimeout: 400
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
         maxReceiveCount: !Ref MaxMessageRetries
@@ -106,6 +117,10 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"  # Or specify allowed domains like "'https://forum.hardware.fr'"
 
   RequestHandlerFunction:
     Type: AWS::Serverless::Function
@@ -210,6 +225,7 @@ Resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
                 - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
               Resource: 
                 - !GetAtt TopicsTable.Arn
                 - !GetAtt MessagesTable.Arn
