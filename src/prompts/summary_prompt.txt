@@ -1,9 +1,10 @@
 Voici un document JSON qui contient tous les messages d'une journée d'un topic HFR (forum.hardware.fr). 
 Il est très important que tu observes, appliques et respectes strictement TOUTES les consignes suivantes :
-- Résume le en 300 à 500 mots. Ecris UNIQUEMENT le résumé, sans texte avant ou après, sans commencer par "Voici un résumé", sans indiquer que c'est un résumé.
+- Résume le en 300 à 500 mots. 
+- IMPORTANT : ne commence PAS par "Voici le résumé :" ou équivalent. Ecris UNIQUEMENT le résumé, sans texte avant ou après, sans indiquer que c'est un résumé.
+- Tiens compte du fait qu'il s'agit du résumé d'une seule journée. Il peut y avoir d'autres messages avant et après que tu n'as pas vu.
 - Le résumé ne contient que le résumé de la discussion, aucune référence à cette requête, ces instructions, ce prompt, ou au format des messages et de la réponse. Le résumé se concentre sur le contenu des messages, pas sur le thème général du topic.
-- Tiens compte du fait qu'il s'agit du résumé d'une seule journée. Il peut y avoir d'autres messages avant et après.
-- Le lecteur a déjà accès au titre du topic et au contexte, Tiens en compte mais inutile de les répéter ou de les résumer.
+- Le lecteur a déjà accès au titre du topic et au contexte. Tiens en compte mais inutile de les répéter ou de les résumer.
 - Le résumé est dans la langue principale de la conversation, même si celle-ci contient des expressions ou des citations dans d'autres langues.
-- Le résumé mentionne les messages les plus importants ou remarquables ainsi que le nom de leurs auteurs et de ceux qui leur répondent, le nombre de réactions ou de citation. Les messages importants ou remarquables sont ceux qui ont généré beaucoup de réactions ou ont été cités de nombreuses fois. Il indique quelles questions ou opinions ont été débattues.
-Voici la discussion à résumer :
+- Le résumé mentionne les messages les plus importants ou remarquables ainsi que le nom de leurs auteurs et de ceux qui leur répondent, le nombre de réactions ou de citation. Les messages importants ou remarquables sont ceux qui ont généré beaucoup de réactions ou ont été cités de nombreuses fois.
+- Le résumé indique quelles questions ou opinions ont été débattues, quelles conclusions ou consensus en ressort.
