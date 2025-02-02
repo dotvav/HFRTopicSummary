@@ -1,13 +1,16 @@
 // ==UserScript==
-// @name         HFR Topic Summarizer
-// @namespace    http://tampermonkey.net/
+// @author       MycRub @ HFR
+// @name         [HFR] Résumé quotidien par topic
+// @description  Utilise une API pour générer le résumé d'une journée pour vos topics préférés.
+// @icon         https://forum.hardware.fr/favicon.ico
+// @namespace    https://mycrub.net
 // @version      0.1
-// @description  Add summary functionality to HFR topics
-// @author       Your name
 // @match        https://forum.hardware.fr/forum2.php*
-// @match        https://forum.hardware.fr/hfr/*
 // @grant        GM_addStyle
 // ==/UserScript==
+
+// Historique
+// 0.1      - Première release
 
 (function() {
     'use strict';
@@ -24,23 +27,32 @@
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.4);
+            /* Add these to enable modal content scrolling */
+            overflow-y: auto;
+            padding: 20px 0;
         }
         .modal-content {
             background-color: #F7F7F7;
-            margin: 15% auto;
+            /* Change margin to be smaller on mobile */
+            margin: 20px auto;
             padding: 20px;
             border: 1px solid #DEDFDF;
             width: 80%;
             max-width: 600px;
+            /* Ensure modal content doesn't overflow viewport */
+            max-height: calc(100vh - 40px);
+            display: flex;
+            flex-direction: column;
         }
         .modal-header {
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             align-items: center;
-            margin-bottom: 15px;
             background-color: #001932;
             padding: 5px;
             color: white;
+            /* Ensure header stays at top */
+            flex-shrink: 0;
         }
         .modal-header h2 {
             margin: 0;
@@ -48,6 +60,13 @@
             font-size: 13px;
             font-family: Arial, Helvetica, sans-serif;
             font-weight: bold;
+            margin-right: 10px;
+        }
+        .date-input {
+            margin-right: auto;
+            background-color: #F7F7F7;
+            border: 1px solid #DEDFDF;
+            padding: 1px 3px;
         }
         .close {
             color: white;
@@ -58,28 +77,21 @@
         .close:hover {
             color: #DEDFDF;
         }
-        .modal-body {
-            margin-bottom: 15px;
-        }
-        .date-input {
-            margin-right: 10px;
-        }
-        .submit-btn {
-            border: 1px solid #000080;
-            background-color: #F7F7F7;
-            color: #000080;
-            padding: 1px 3px;
-            cursor: pointer;
-        }
         .summary-content {
             border: 1px solid #DEDFDF;
             padding: 10px;
-            margin-top: 10px;
+            margin-top: 15px;
             background-color: white;
-            white-space: pre-wrap;    /* Preserve whitespace and line breaks */
-            font-family: Arial, Helvetica, sans-serif;  /* Use forum's font instead of monospace */
+            white-space: pre-wrap;
+            font-family: Arial, Helvetica, sans-serif;
+            /* Add these for scrolling summary content */
+            overflow-y: auto;
+            flex-grow: 1;
+            /* Set a minimum height to ensure modal isn't too small */
+            min-height: 100px;
         }
     `);
+    
     
     const SummaryCache = {
         KEY_PREFIX: 'hfr_summary_',
@@ -175,7 +187,6 @@
             const response = await fetch(url);
             const data = await response.json();
 
-            // Check if polling was cancelled
             if (signal.aborted) {
                 return;
             }
@@ -191,15 +202,13 @@
                 return;
             }
 
-            // Check if we've been polling for more than 3 minutes
             if (Date.now() - startTime > 180000) {
                 summaryContent.innerHTML = 'La génération plend plus de temps que prévu. Revenez un peu plus tard.';
                 return;
             }
 
-            // Continue polling if still in progress
             if (data.status === 'in_progress') {
-                await new Promise(resolve => setTimeout(resolve, 20000)); // 20s interval
+                await new Promise(resolve => setTimeout(resolve, 20000));
                 if (!signal.aborted) {
                     await pollSummary(topicId, date, startTime, summaryContent, signal);
                 }
@@ -212,23 +221,19 @@
         }
     }
 
-    // Sanitize and display function
     function sanitizeAndDisplaySummary(summary) {
         const div = document.createElement('div');
         
-        // Basic HTML sanitization
         const sanitized = summary
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#x27;')
-            // Optionally preserve some safe HTML tags
             .replace(/&lt;b&gt;/g, '<b>')
             .replace(/&lt;\/b&gt;/g, '</b>')
             .replace(/&lt;i&gt;/g, '<i>')
             .replace(/&lt;\/i&gt;/g, '</i>')
-            // Convert URLs to links
             .replace(
                 /(https?:\/\/[^\s]+)/g, 
                 '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
@@ -239,7 +244,6 @@
     }
 
     async function fetchSummary(date) {
-        // Cancel any existing polling
         if (currentPollController) {
             currentPollController.abort();
         }
@@ -258,7 +262,6 @@
             return;
         }
 
-        // Check cache first
         const cached = SummaryCache.get(topicId, date);
         if (cached && cached.status === 'completed') {
             sanitizeAndDisplaySummary(cached.summary);
@@ -266,7 +269,6 @@
         }
 
         try {
-            // Add spinner CSS if not already added
             if (!document.querySelector('#spinner-style')) {
                 const style = document.createElement('style');
                 style.id = 'spinner-style';
@@ -318,18 +320,18 @@
         }
     }
 
-    // Create and setup modal
     const modal = document.createElement('div');
     modal.className = 'modal';
     modal.innerHTML = `
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Résumé</h2>
+                <h2>Résumé de la journée :</h2>
+                <input type="date" 
+                    class="date-input" 
+                    value="${getYesterday()}"
+                    max="${getYesterday()}"
+                >
                 <span class="close">&times;</span>
-            </div>
-            <div class="modal-body">
-                <input type="date" class="date-input" value="${getYesterday()}">
-                <button class="submit-btn">Obtenir le résumé</button>
             </div>
             <div class="summary-content"></div>
         </div>
@@ -338,7 +340,6 @@
 
     SummaryCache.cleanup();
 
-    // Add summary button next to Go button
     const goButton = document.querySelector('input[type="submit"][value="Go"].boutton');
     if (goButton) {
         const summaryButton = document.createElement('input');
@@ -353,11 +354,10 @@
         
         summaryButton.onclick = () => {
             modal.style.display = 'block';
-            fetchSummary(getYesterday());
+            fetchSummary(modal.querySelector('.date-input').value);
         };
     }
 
-    // Modal event handlers
     modal.querySelector('.close').onclick = () => {
         if (currentPollController) {
             currentPollController.abort();
@@ -376,8 +376,7 @@
         }
     };
 
-    modal.querySelector('.submit-btn').onclick = () => {
-        const date = modal.querySelector('.date-input').value;
-        fetchSummary(date);
-    };
+    modal.querySelector('.date-input').addEventListener('change', (e) => {
+        fetchSummary(e.target.value);
+    });
 })();
