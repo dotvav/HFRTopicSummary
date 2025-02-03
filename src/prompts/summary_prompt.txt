@@ -7,4 +7,4 @@ Il est très important que tu observes, appliques et respectes strictement TOUTE
 - Le lecteur a déjà accès au titre du topic et au contexte. Tiens en compte mais inutile de les répéter ou de les résumer.
 - Le résumé est dans la langue principale de la conversation, même si celle-ci contient des expressions ou des citations dans d'autres langues.
 - Le résumé mentionne les messages les plus importants ou remarquables ainsi que le nom de leurs auteurs et de ceux qui leur répondent, le nombre de réactions ou de citation. Les messages importants ou remarquables sont ceux qui ont généré beaucoup de réactions ou ont été cités de nombreuses fois.
-- Le résumé indique quelles questions ou opinions ont été débattues, quelles conclusions ou consensus en ressort.
+- Le résumé indique le ton général des messages et quelles questions ou opinions ont été débattues, quelles conclusions ou consensus en ressort.
