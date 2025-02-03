@@ -1,4 +1,3 @@
-boto3 == 1.34.131
+boto3==1.34.131
 aws-xray-sdk==2.4.3
-beautifulsoup4
-../../HFR/HFR/dist/hfr_api-0.1.1.tar.gz
+../../HFR/HFR/dist/hfr_api-0.0.2.tar.gz
