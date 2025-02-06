@@ -12,14 +12,15 @@ from hfr import Message, Topic
 from common.constants import SCHEMA_VERSION
 
 MESSAGE_COUNT_LIMIT = 500
+CHARACTER_COUNT_LIMIT = 200000
 
 logger = logging.getLogger()
-log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 try:
     logger.setLevel(getattr(logging, log_level))
 except (AttributeError, TypeError):
-    logger.setLevel(logging.WARNING)
-    logger.warning(f"Invalid LOG_LEVEL '{log_level}', defaulting to WARNING")
+    logger.setLevel(logging.INFO)
+    logger.warning(f"Invalid LOG_LEVEL '{log_level}', defaulting to INFO")
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-3")
 bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
@@ -119,11 +120,12 @@ def load_messages_from_ddb(topic: Topic, summary_date_str: str) -> list[Message]
 
             response = messages_table.query(**query_args)
             messages.extend(
-                Message.from_dict(topic, item) 
+                Message.from_dict(topic, item)
                 for item in response.get("Items", [])
-                if item.get("schema_version", 1) < SCHEMA_VERSION # Drop old incompatible messages
+                if item.get("schema_version", 1)
+                < SCHEMA_VERSION  # Drop old incompatible messages
             )
-                    
+
             last_evaluated_key = response.get("LastEvaluatedKey")
             if not last_evaluated_key:
                 break
@@ -170,11 +172,6 @@ def load_messages_from_web(
     # Now extract the last `MESSAGE_COUNT_LIMIT` messages of yesterday
     if topic.has_date(summary_date_str):
         messages = topic.messages_on_date(summary_date_str)
-        if len(messages) > MESSAGE_COUNT_LIMIT:
-            messages = messages[-MESSAGE_COUNT_LIMIT:]
-        logger.debug(
-            f"Yesterday's messages count = {len(topic.messages_on_date(summary_date_str))}, selected messages {len(messages)}"
-        )
     else:
         logger.debug(f"No messages at date {summary_date_str}")
         messages = ()
@@ -226,6 +223,11 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
         indent=4,
     )
 
+    message_count = len(messages)
+    message_char_count = 0
+    for message in messages:
+        message_char_count += len(message.text)
+
     # Submit the doc for summary
     bedrock_request = {
         "modelId": bedrock_model_id,
@@ -249,6 +251,9 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
         bedrock_response = bedrock_client.invoke_model(**bedrock_request)
         response_body = json.loads(bedrock_response["body"].read())
         summary = response_body["content"][0]["text"]
+        logger.info(
+            f"Usage data: message_count={message_count}, message_char_count={message_char_count}, input_tokens={response_body['usage']['input_tokens']}, output_token={response_body['usage']['output_tokens']}"
+        )
         return_data = {"success": True, "summary": summary}
     except Exception as e:
         logger.error(e)
@@ -258,7 +263,7 @@ def get_summary_data(topic: Topic, date_str: str, messages: list[Message]) -> di
             "json_string": json.dumps(bedrock_request),
         }
 
-    logger.debug(return_data)
+    #logger.debug(return_data)
 
     return return_data
 
@@ -270,6 +275,24 @@ def get_topic(cat, subcat, post) -> Topic:
         return Topic.from_dict()
     else:
         return Topic(cat, subcat, post)
+
+
+def get_last_messages_within_limit(
+    messages: list[Message],
+    messages_limit: int = MESSAGE_COUNT_LIMIT,
+    char_limit: int = CHARACTER_COUNT_LIMIT,
+) -> list[Message]:
+    total_chars = 0
+    included_messages = []
+    for message in reversed(messages):
+        message_length = len(message.text)
+        if total_chars + message_length > char_limit:
+            break
+        included_messages.insert(0, message)
+        total_chars += message_length
+        if len(included_messages) >= messages_limit:
+            break
+    return included_messages
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
@@ -293,7 +316,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
             ):
                 load_messages_from_web(topic, date_str, True)
 
-            messages = topic.messages_on_date(date_str)
+            messages = get_last_messages_within_limit(topic.messages_on_date(date_str))
+
+            if len(messages) > MESSAGE_COUNT_LIMIT:
+                messages = messages[-MESSAGE_COUNT_LIMIT:]
+
             if messages:
                 try:
                     summary_data = get_summary_data(topic, date_str, messages)
